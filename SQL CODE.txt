@@ -1,0 +1,762 @@
+data table;
+set WORK.IMPORT;
+
+
+/*rounding imputed monthly income values*/
+
+data table1;
+set table;
+IMP_Monthly_Income = round(IMP_Monthly_Income);
+IMP_Age = round(IMP_Age);
+run;
+
+data table2;
+set table1;
+
+
+/*INCOHERENCES*/
+
+/* droping _WARN_*/
+drop _WARN_;
+
+/* Incoherence NR 1
+- paying cash in online shopping */
+if (Payment = 'Cash' and Channel = 'Online') then do;
+delete;
+end;
+
+/* Incoherence NR 2
+- kids or no kids? */
+if (IMP_Kids ne 0 and IMP_Kids ne 1) then do;
+delete;
+end;
+
+/* Incoherence NR 3
+- invalid gender */
+if (Gender ne 'F' and Gender ne 'M' and Gender ne 'O') then do;
+delete;
+end;
+
+/*Incoherence NR 4
+- paying cash online */
+if (Channel = 'Online' and 'Payment' = 'Online') then do;
+delete;
+end;
+
+/* Incoherence NR 5
+-invalid product category*/
+if (Product_Category_Name ne 'Beauty & Accessories' and Product_Category_Name ne 'Candles & Lights' 
+and Product_Category_Name ne 'Decorative items' and Product_Category_Name ne 'Entryway items' and
+Product_Category_Name ne 'Kitchenware' and Product_Category_Name ne 'Miscellaneous'  and
+Product_Category_Name ne 'Office supplies' and Product_Category_Name ne 'Socks' and 
+Product_Category_Name ne 'Sombrero') then do;
+delete;
+end;
+
+/*Incoherence NR 6
+- invalid Channel*/
+if (Channel ne 'Online' and Channel ne 'Store') then do;
+delete; 
+end;
+
+
+/*Incoherence NR 7
+-invalid Payment Type*/ 
+if (Payment ne 'Cash' and Payment ne 'Credit Card' and Payment ne 'Paypal') then do;
+delete;
+end;
+
+/*Incoherence NR 8
+-invalid nationality */
+if (Nationality = 'Unspecified') then do;
+delete;
+end;
+
+
+/* Incoherence NR 9
+-invalid Unit's Price*/
+IF (Unit_Price <0) then do;
+delete;
+end;
+
+/* Incoherence NR 10 
+- Inconsistency in Total Payment Calculation */
+if Total_payed ne (Unit_Price * Quantity) then do;
+    Total_Payed = Unit_Price * Quantity;
+end;
+
+/* Incoherence NR 11
+- invalid quantity*/
+if (Quantity < 1) then do;
+delete;
+end;
+
+
+
+/* Incoherence NR 12
+-Invalid Monthly Income*/
+if (IMP_Monthly_Income < 0) then do;
+delete;
+end;
+
+/* Incoherence NR 13
+-Invalid IMP_Age*/
+if (IMP_Age <16 or IMP_Age > 99) then do;
+delete;
+end;
+
+/* Incoherence NR 14 
+- Invalid Date*/
+if (Year(Date) >= 2020) then do;
+delete;
+end;
+
+proc sort data=WORK.IMPORT;
+    by TransactionNo Date ProductID CustomerNo; 
+run;
+
+/* Incoherence NR 15
+-More than 1 gender and nationality*/ 
+
+proc sql;
+    create table WORK.CustomerSummary as
+    select CustomerNo,
+           count(distinct Nationality) as NumNationalities,
+           count(distinct Gender) as NumGenders,
+           count(distinct IMP_Kids) as Numkids,
+           count(distinct IMP_Monthly_Income) as  MonthlyIncome
+    from WORK.TABLE2
+    group by CustomerNo; 
+quit;
+proc sql;
+    create table inc_transactions_id_customer as
+    select CustomerNo as Customers, TransactionNo as Transactions, IMP_Monthly_Income
+    from WORK.TABLE2
+    where CustomerNo = 12414 
+    order by CustomerNo, TransactionNo;
+run;
+
+
+/*deleting customers' incoherences
+16584: inserted 2 genders
+13841: inserted 2 genders
+12414: inserted 2 genders 
+12414 has 2 monthly incomes. One is 1500 euros, another one is 2998 euros (rounded)
+this second value was imputed by SAS MINER. If this was the only issue, he/she/it 
+would be not eliminated, but has he/she/it has 2 genders in the database, Customer 12441 will be eliminated*/
+data WORK.TABLE2;
+    set WORK.TABLE2;
+    if CustomerNo in (16584, 13841, 12414) then delete;
+run;
+
+
+
+/*Incoherence NR 16
+-Transaction made by multiple customers*/
+proc sql;
+	create table transaction_id_cust_id as 
+	select TransactionNo, count(distinct(CustomerNO)) as diff_customer
+	from WORK.TABLE2
+	group by TransactionNO
+	having count(distinct(CustomerNo)) ne 1;
+run;
+
+/*Incoherence NR 17
+-Multiple dates in one transaction*/
+proc sql;
+	create table inc_transaction_diff_dates as
+	select TransactionNo, count(distinct(Date)) as diff_transaction_date
+	from WORK.TABLE2
+	group by transactionNo
+	having count(distinct(Date)) ne 1;
+run;
+	
+/*Incoherence NR 18
+-Multiple Channel in one transaction*/
+proc sql;
+	create table inc_transaction_channel as
+	select TransactionNo, count(distinct(Channel)) as diff_channel_number
+	from WORK.IMPORT
+	group by TransactionNo
+	having count(distinct(channel)) ne 1;
+run;
+
+/*Incoherence NR 19
+-multiple payment types*/
+proc sql;
+	create table inc_transaction_payment as
+	select TransactionNo, count(distinct(Payment)) as diff_payment_type_number
+	from WORK.TABLE2
+	group by TransactionNo
+	having count(distinct(Payment)) ne 1;
+run;
+
+
+
+
+
+/*CREATING ABT*/
+
+
+/*DEMOGRAPHIC INFO ABOUT CUSTOMERS 
+-GENDER
+-AGE
+-NATIONALITY*/
+
+/*Gender*/
+/*Creating a table 'Gender' that contains unique customer numbers and their corresponding gender, sorted by customer number and gender.*/
+proc sql;
+    create table gender as
+    select distinct CustomerNo, Gender
+    from WORK.TABLE2
+    order by CustomerNo, Gender;
+run;
+
+/*Age*/
+/*Creating a table 'Age' that contains unique customer numbers and their corresponding age, sorted by customer number.*/
+proc sql;
+	create table Age as
+	select distinct CustomerNo, IMP_Age
+	from WORK.TABLE2
+	order by CustomerNo;
+run;
+
+/*Creating a table 'Kids' that contains unique customer numbers and a flag or number indicating kids, sorted by customer number and the kids indicator.*/
+proc sql;
+    create table Kids as
+    select distinct CustomerNo, IMP_Kids
+    from WORK.TABLE2
+    order by CustomerNo, IMP_Kids;
+run;
+
+/*Creating a table 'Nationality' that contains unique customer numbers and their corresponding nationality, sorted by customer number and nationality.*/
+proc sql;
+    create table Nationality as
+    select distinct CustomerNo, Nationality
+    from WORK.TABLE2
+    order by CustomerNo, Nationality;
+run;
+/*DEMOGRAPHIC INFO IS OVER*/
+
+
+
+/*Static Information*/
+
+/*RFM SCORE
+-RECENCY
+-FREQUENCY
+-MONETARY*/
+
+/*Calculating Recency*/
+/* Definir a data de referência para 1 de janeiro de 2020 */
+%let referenceDate = '1jan2020'd;
+
+/* Calcular Recency com base na data de referência */
+proc sql;
+    create table Recency as
+    select CustomerNo,
+           /* Calcular o número de dias entre a última compra e a data de referência */
+           intck('day', max(Date), &referenceDate) as DaysSinceLastPurchase
+    from WORK.TABLE2
+    group by CustomerNo;
+run;
+
+
+/*Creating a table 'Frequency' that counts the total number of transactions per customer.*/
+proc sql;
+    create table Frequency as
+    select CustomerNo, count(distinct(TransactionNo)) as freq
+    from WORK.TABLE2
+    group by CustomerNo;
+run;
+
+/*Creating a table 'Monetary' that calculates the total amount spent by each customer.*/
+proc sql;
+    create table Monetary as
+    select distinct CustomerNo, sum(Unit_Price*Quantity) as Monetary
+    from WORK.TABLE2
+    group by CustomerNo
+    order by CustomerNo;
+run;
+
+/*CREATING RFM SCORE*/
+
+/* Assigns ranking for Frequency based on specified limits */
+proc sql;
+    create table Frequency_Rank as
+    select CustomerNo,
+           case
+               when freq >= 1 and freq < 10 then 1
+               when freq >= 10 and freq < 20 then 2
+               when freq >= 20 then 3
+           end as FrequencyRank
+    from Frequency;
+quit;
+
+/* Assigns ranking for Recency based on specified limits */
+proc sql;
+    create table Recency_Rank as
+    select CustomerNo,
+           case
+               when DaysSinceLastPurchase <= 73 then 3
+               when DaysSinceLastPurchase > 73 and DaysSinceLastPurchase < 110 then 2
+               else 1
+           end as RecencyRank
+    from Recency;
+quit;
+
+
+/* Assigns ranking for Monetary based on specified limits */
+proc sql;
+    create table Monetary_Rank as
+    select CustomerNo,
+           case
+               when Monetary < 1000 then 1
+               when Monetary >= 1000 and Monetary < 3500 then 2
+               when Monetary >= 3500 then 3
+           end as MonetaryRank
+    from Monetary;
+quit;
+
+/* Combines the rankings into a single Score table */
+proc sql;
+    create table Score as
+    select a.CustomerNo,
+           a.RecencyRank,
+           b.FrequencyRank,
+           c.MonetaryRank,
+           cats(a.RecencyRank, b.FrequencyRank, c.MonetaryRank) as RFMScore
+    from Recency_Rank as a
+    join Frequency_Rank as b on a.CustomerNo = b.CustomerNo
+    join Monetary_Rank as c on a.CustomerNo = c.CustomerNo;
+quit;
+/* Assigns ranking for Frequency based on specified limits */
+proc sql;
+    create table Frequency_Rank as
+    select CustomerNo,
+           case
+               when freq >= 1 and freq < 10 then 1
+               when freq >= 10 and freq < 20 then 2
+               when freq >= 20 then 3
+           end as FrequencyRank
+    from Frequency;
+quit;
+
+/* Assigns ranking for Recency based on specified limits */
+proc sql;
+    create table Recency_Rank as
+    select CustomerNo,
+           case
+               when DaysSinceLastPurchase <= 73 then 3
+               when DaysSinceLastPurchase > 73 and DaysSinceLastPurchase < 110 then 2
+               else 1
+           end as RecencyRank
+    from Recency;
+quit;
+
+
+/* Assigns ranking for Monetary based on specified limits */
+proc sql;
+    create table Monetary_Rank as
+    select CustomerNo,
+           case
+               when Monetary < 1000 then 1
+               when Monetary >= 1000 and Monetary < 3500 then 2
+               when Monetary >= 3500 then 3
+           end as MonetaryRank
+    from Monetary;
+quit;
+
+/* Combines the rankings into a single Score table */
+proc sql;
+    create table Score as
+    select a.CustomerNo,
+           a.RecencyRank,
+           b.FrequencyRank,
+           c.MonetaryRank,
+           cats(a.RecencyRank, b.FrequencyRank, c.MonetaryRank) as RFMScore
+    from Recency_Rank as a
+    join Frequency_Rank as b on a.CustomerNo = b.CustomerNo
+    join Monetary_Rank as c on a.CustomerNo = c.CustomerNo;
+quit;
+
+/* Adding a column 'cluster' with null val */
+proc sql;
+    alter table Score
+    add CLUSTER char(10);
+quit;
+
+/* updating 'cluster' with RFM */
+proc sql;
+    update Score
+    set CLUSTER = 
+        case 
+            when (coalesce(RecencyRank,0) + coalesce(FrequencyRank,0) + coalesce(MonetaryRank,0)) = 3 then 'Bronze'
+            when (coalesce(RecencyRank,0) + coalesce(FrequencyRank,0) + coalesce(MonetaryRank,0)) between 4 and 5 then 'Silver'
+            when (coalesce(RecencyRank,0) + coalesce(FrequencyRank,0) + coalesce(MonetaryRank,0)) between 6 and 7 then 'Gold'
+            when (coalesce(RecencyRank,0) + coalesce(FrequencyRank,0) + coalesce(MonetaryRank,0)) = 8 then 'Platina'
+            when (coalesce(RecencyRank,0) + coalesce(FrequencyRank,0) + coalesce(MonetaryRank,0)) = 9 then 'Prestige'
+            else 'Unassigned'
+        end;
+quit;
+
+/* RFM FINISHED*/
+ 
+
+/*Creating a table 'CategoryFrequency' that shows how often each customer purchased in each product category.*/
+proc sql;
+    create table CategoryFrequency as
+    select CustomerNo, Product_Category_Name, count(distinct TransactionNo) as freq
+    from WORK.TABLE2
+    Group by CustomerNo, Product_Category_Name;
+run;
+
+/*Sorting 'CategoryFrequency' by customer number.*/
+proc sort data=CategoryFrequency;
+    by CustomerNo;
+run;
+
+
+/*Creating a table 'MonetaryCategory' that calculates the total amount spent by each customer in each product category.*/
+proc sql;
+    create table MonetaryCategory as
+    SELECT CustomerNo,
+           SUM(CASE WHEN Product_Category_Name = 'Beauty & Accessories' THEN Unit_Price ELSE 0 END) AS Beauty_Accessories,
+           SUM(CASE WHEN Product_Category_Name = 'Candles & Lights' THEN Unit_Price ELSE 0 END) AS Candles_Lights,
+           SUM(CASE WHEN Product_Category_Name = 'Decorative items' THEN Unit_Price ELSE 0 END) AS Decorative_items,
+           SUM(CASE WHEN Product_Category_Name = 'Entryway items' THEN Unit_Price ELSE 0 END) AS Entryway_items,
+           SUM(CASE WHEN Product_Category_Name = 'Kitchenware' THEN Unit_Price ELSE 0 END) AS Kitchenware,
+           SUM(CASE WHEN Product_Category_Name = 'Miscellaneous' THEN Unit_Price ELSE 0 END) AS Miscellaneous,
+           SUM(CASE WHEN Product_Category_Name = 'Office supplies' THEN Unit_Price ELSE 0 END) AS Office_supplies,
+           SUM(CASE WHEN Product_Category_Name = 'Socks' THEN Unit_Price ELSE 0 END) AS Socks,
+           SUM(CASE WHEN Product_Category_Name = 'Sombrero' THEN Unit_Price ELSE 0 END) AS Sombrero
+    from WORK.TABLE2
+    GROUP BY CustomerNo
+    ORDER BY CustomerNo;
+run;
+
+
+/*Creating a table 'FirstPurchase' that records the earliest purchase date for each customer.*/
+proc sql;
+    create table FirstPurchase as
+    select CustomerNo, min(Date) as CustomerSince format=date9.
+    from WORK.TABLE2
+    group by CustomerNo;
+run;
+
+
+/*Creating a table 'LastPurchase' that records the most recent purchase date for each customer.*/
+proc sql;
+    create table LastPurchase as
+    select CustomerNo, max(Date) as LastPurchase format=date9.
+    from WORK.TABLE2
+    group by CustomerNo;
+run;
+
+
+/*Creating a table 'MonetaryPerChannel' that calculates the total amount spent by each customer in each channel.*/
+proc sql;
+    create table MonetaryPerChannel as
+    select CustomerNo,
+           SUM(CASE WHEN Channel = 'Store' THEN Unit_Price*Quantity ELSE 0 END) AS MonetaryStore,
+           SUM(CASE WHEN Channel = 'Online' THEN Unit_Price*Quantity ELSE 0 END) AS MonetaryOnline
+    from WORK.TABLE2
+    group by CustomerNo;
+run;
+
+
+/*Creating a table 'FreqChannel' that counts the number of purchases each customer made in each channel.*/
+proc sql;
+    create table FreqChannel as
+    select CustomerNo,
+           sum(CASE WHEN Channel = 'Store' THEN 1 ELSE 0 END) AS FreqStore,
+           sum(CASE WHEN Channel = 'Online' THEN 1 ELSE 0 END) AS FreqOnline
+    from WORK.TABLE2
+    group by CustomerNo;
+run;
+
+
+/*Creating FavoriteCategory*/
+/* Passo 1: Count Purchases per Category Name */
+proc sql;
+    create table CategoryCounts as
+    select CustomerNo, Product_Category_Name, count(*) as PurchaseCount
+    from WORK.TABLE2
+    group by CustomerNo, Product_Category_Name;
+quit;
+
+/* Passo 2: Identify the most purchased category per client */
+proc sql;
+    create table FavoriteCategory as
+    select a.CustomerNo, a.Product_Category_Name
+    from CategoryCounts as a
+    where a.PurchaseCount = (select max(b.PurchaseCount) from CategoryCounts as b where a.CustomerNo = b.CustomerNo)
+    group by a.CustomerNo, a.Product_Category_Name;
+quit;
+/*Favorite Category OVER*/
+
+/*Creating a table with Customer Duration*/
+/* Joining first and last purchase */
+proc sql;
+    create table FirstLastPurchase as
+    select CustomerNo,
+           min(Date) as FirstPurchase,
+           max(Date) as LastPurchase
+    from WORK.TABLE2
+    group by CustomerNo;
+quit;
+
+/* Calculating days between dates */
+proc sql;
+    create table CustomerDuration as
+    select CustomerNo,
+           intck('day', FirstPurchase, LastPurchase) as DurationDays
+    from FirstLastPurchase;
+quit;
+/*Customer Duration OVER*/ 
+
+
+/*Creating table with how many categories did Customer bought*/
+proc sql;
+    create table CategoryCountPerCustomer as
+    select CustomerNo, 
+           count(distinct Product_Category_Name) as NumCategories
+    from WORK.TABLE2
+    group by CustomerNo;
+quit;
+
+/*Frequency on PaymentType*/
+proc sql;
+    create table PaymentFrequency as
+    select CustomerNo, 
+           sum(case when Payment = 'Paypal' then 1 else 0 end) as PayPalFrequency,
+           sum(case when Payment = 'Cash' then 1 else 0 end) as CashFrequency,
+           sum(case when Payment = 'Credit Card' then 1 else 0 end) as CreditCardFrequency
+    from WORK.TABLE2
+    group by CustomerNo;
+quit;
+
+
+/*Creating Favorite Payment Type*/
+proc sql;
+    /* Criação de uma tabela temporária para contar a frequência de pagamentos */
+    create table PaymentCounts as
+    select CustomerNo, Payment, count(*) as Frequency
+    from WORK.TABLE2
+    group by CustomerNo, Payment;
+quit;
+
+/*Creating most used payment method*/
+proc sql;
+    /* Identification of the most used */
+    create table PaymentFavouriteIntermediate as
+    select a.CustomerNo, 
+           a.Payment, 
+           a.Frequency, 
+           count(*) as NumOfModes
+    from PaymentCounts as a
+    inner join 
+        (select CustomerNo, max(Frequency) as MaxFreq
+         from PaymentCounts
+         group by CustomerNo) as b
+    on a.CustomerNo = b.CustomerNo and a.Frequency = b.MaxFreq
+    group by a.CustomerNo, a.Frequency;
+quit;
+
+/* Set ties as 'No Favourite' */
+data PaymentFavourite;
+    set PaymentFavouriteIntermediate;
+    by CustomerNo;
+    if first.CustomerNo and last.CustomerNo and NumOfModes = 1 then FavoritePayment = Payment;
+    else FavoritePayment = 'No Favorite';
+run;
+/*Favourite payment type OVER*/
+
+
+/*Creating table with the total amount spent in each payment method*/
+proc sql;
+    create table MonetaryPayment as
+    select CustomerNo, 
+           sum(case when Payment = 'Paypal' then Unit_Price * Quantity else 0 end) as PayPalMonetary,
+           sum(case when Payment = 'Cash' then Unit_Price * Quantity else 0 end) as CashMonetary,
+           sum(case when Payment = 'Credit Card' then Unit_Price * Quantity else 0 end) as CreditCardMonetary
+    from WORK.TABLE2
+    group by CustomerNo;
+quit;
+
+/*Creating table with the total amount spent in each Product Category*/
+proc sql;
+    create table MonetaryPerCategory as
+    select CustomerNo,
+           SUM(CASE WHEN Product_Category_Name = 'Beauty & Accessories' THEN Unit_Price * Quantity ELSE 0 END) AS Monetary_Beauty_Accessories,
+           SUM(CASE WHEN Product_Category_Name = 'Candles & Lights' THEN Unit_Price * Quantity ELSE 0 END) AS Monetary_Candles_Lights,
+           SUM(CASE WHEN Product_Category_Name = 'Decorative items' THEN Unit_Price * Quantity ELSE 0 END) AS Monetary_Decorative_items,
+           SUM(CASE WHEN Product_Category_Name = 'Entryway items' THEN Unit_Price * Quantity ELSE 0 END) AS Monetary_Entryway_items,
+           SUM(CASE WHEN Product_Category_Name = 'Kitchenware' THEN Unit_Price * Quantity ELSE 0 END) AS Monetary_Kitchenware,
+           SUM(CASE WHEN Product_Category_Name = 'Miscellaneous' THEN Unit_Price * Quantity ELSE 0 END) AS Monetary_Miscellaneous,
+           SUM(CASE WHEN Product_Category_Name = 'Office supplies' THEN Unit_Price * Quantity ELSE 0 END) AS Monetary_Office_supplies,
+           SUM(CASE WHEN Product_Category_Name = 'Socks' THEN Unit_Price * Quantity ELSE 0 END) AS Monetary_Socks,
+           SUM(CASE WHEN Product_Category_Name = 'Sombrero' THEN Unit_Price * Quantity ELSE 0 END) AS Monetary_Sombrero
+    from WORK.TABLE2
+    group by CustomerNo;
+quit;
+
+
+
+/*Average Variables*/
+
+
+/*Creating Average Spent per Purchase*/
+/* Passo 1: Calculate the total_paid per client per purchase */
+proc sql;
+    create table TotalSpentPerTransaction as
+    select CustomerNo, TransactionNo, sum(Unit_Price * Quantity) as TotalSpent
+    from WORK.TABLE2
+    group by CustomerNo, TransactionNo;
+quit;
+
+/* Passo 2: Calculate the average */
+proc sql;
+    create table AvgSpentPerPurchase as
+    select CustomerNo, mean(TotalSpent) as AvgSpent
+    from TotalSpentPerTransaction
+    group by CustomerNo;
+quit;
+
+
+
+/*Create table with average days between purchases*/
+/* Criar uma cópia da TABLE2 ordenada por cliente e data */
+proc sort data=WORK.TABLE2 out=SortedPurchases;
+    by CustomerNo Date;
+run;
+
+/* Calculating the difference of days between 2 consecutive purchases */
+data Diffs;
+    set SortedPurchases;
+    by CustomerNo;
+    retain prevDate; 
+    if first.CustomerNo then do;
+        prevDate = Date;
+        DaysDiff = .; /* Não calcular diferença para a primeira compra de cada cliente */
+    end;
+    else do;
+        DaysDiff = Date - prevDate; /* Calcular a diferença para compras subsequentes */
+        prevDate = Date;
+    end;
+    if not first.CustomerNo;
+run;
+
+/* Calculating average */
+proc sql;
+    create table AvgDaysBetweenPurchases as
+    select CustomerNo, mean(DaysDiff) as AvgDaysBetweenPurchases
+    from Diffs
+    where DaysDiff is not null
+    group by CustomerNo;
+quit;
+
+/*Average days between Purchases OVER*/
+
+
+/*Merging to ABT*/
+
+
+data final;
+merge Age kids nationality recency frequency monetary 
+score firstpurchase lastpurchase CustomerDuration
+freqchannel  monetaryperchannel PaymentFrequency PaymentFavourite MonetaryPayment 
+MonetaryPerCategory favoritecategory
+AvgSpentPerPurchase AvgDaysBetweenPurchases 
+CategoryCountPerCustomer ;
+by CustomerNo;
+run;
+
+
+/* Criar cópia da tabela com renomeação de variáveis e exclusão de colunas */
+data WORK.final_copy;
+    set WORK.final;
+    rename IMP_Age = Age 
+           IMP_Kids = Kids 
+           Product_Category_Name = FavoriteCategory 
+           DurationDays = DurationCustomer;
+    drop Frequency NumOfModes Payment;
+run;
+
+/* Atualizar a tabela com valores arredondados para AvgSpent e AvgDaysBetweenPurchases */
+data WORK.final_copy;
+    set WORK.final_copy;
+    AvgSpent = round(AvgSpent);
+    AvgDaysBetweenPurchases = round(AvgDaysBetweenPurchases);
+run;
+
+data WORK.final_copy;
+    set WORK.final_copy;
+    
+    /* Converter para inteiro */
+    CustomerNo = input(put(CustomerNo, best32.), best32.);
+    Age = input(put(Age, best32.), best32.);
+    DaysSinceLastPurchase = input(put(DaysSinceLastPurchase, best32.), best32.);
+    freq = input(put(freq, best32.), best32.);
+    RecencyRank = input(put(RecencyRank, best32.), best32.);
+    FrequencyRank = input(put(FrequencyRank, best32.), best32.);
+    MonetaryRank = input(put(MonetaryRank, best32.), best32.);
+    RFMScore = input(put(RFMScore, best32.), best32.);
+    DurationCustomer = input(put(DurationCustomer + 1, best32.), best32.); /* Adicionar +1 Ass. Francisco Batista */
+    FreqStore = input(put(FreqStore, best32.), best32.);
+    FreqOnline = input(put(FreqOnline, best32.), best32.);
+    PaypalFrequency = input(put(PaypalFrequency, best32.), best32.);
+    CashFrequency = input(put(CashFrequency, best32.), best32.);
+    CreditCardFrequency = input(put(CreditCardFrequency, best32.), best32.);
+    AvgDaysBetweenPurchase = input(put(AvgDaysBetweenPurchase, best32.), best32.);
+    NumCategories = input(put(NumCategories, best32.), best32.);
+    monetary = input(put(monetary, best32.), best32.);
+    MonetaryStore = input(put(MonetaryStore, best32.), best32.);
+    MonetaryOnline = input(put(MonetaryOnline, best32.), best32.);
+    PaypalMonetary = input(put(PaypalMonetary, best32.), best32.);
+    CashMonetary = input(put(CashMonetary, best32.), best32.);
+    CreditCardMonetary = input(put(CreditCardMonetary, best32.), best32.);
+    Monetary_Beauty_Accessories = input(put(Monetary_Beauty_Accessories, best32.), best32.);
+    Monetary_Candles_Lights = input(put(Monetary_Candles_Lights, best32.), best32.);
+    Monetary_Decorative_Items = input(put(Monetary_Decorative_Items, best32.), best32.);
+    Monetary_Entryway_Items = input(put(Monetary_Entryway_Items, best32.), best32.);
+    Monetary_Kitchenware = input(put(Monetary_Kitchenware, best32.), best32.);
+    Monetary_Miscellaneous = input(put(Monetary_Miscellaneous, best32.), best32.);
+    Monetary_Office_Supplies = input(put(Monetary_Office_Supplies, best32.), best32.);
+    Monetary_Socks = input(put(Monetary_Socks, best32.), best32.);
+    Monetary_Sombrero = input(put(Monetary_Sombrero, best32.), best32.);
+
+    /* Converter datas para formato date9. */
+    CustomerSince = input(put(CustomerSince, date9.), date9.);
+    LastPurchase = input(put(LastPurchase, date9.), date9.);
+
+    /* Variáveis varchar (string) não precisam de conversão */
+run;
+
+proc sort data=WORK.FINAL nodupkey;
+    by CustomerNo;
+run;
+
+
+proc sql;
+    create table WORK.TABLE2_Modified as
+    select 
+        TransactionNo format=best32., /* Mantém como numérico */
+        Date format=date9., /* Mantém como data */
+        ProductID format=best32., /* Mantém como numérico */
+        strip(ProductName) as ProductName, /* Mantém como string */
+        Quantity format=best32., /* Mantém como numérico */
+        Total_payed format=best32., /* Mantém como numérico */
+        CustomerNo format=best32., /* Mantém como numérico */
+        strip(Nationality) as Nationality, /* Mantém como string */
+        strip(Gender) as Gender, /* Mantém como string */
+        strip(Payment) as Payment, /* Mantém como string */
+        strip(Channel) as Channel, /* Mantém como string */
+        strip(Product_Category_Name) as Product_Category_Name, /* Mantém como string */
+        Product_Category_ID format=best32., /* Mantém como numérico */
+        Unit_Price format=best32., /* Mantém como numérico */
+        IMP_Age, /* Se já for numérico, mantém como está */
+        IMP_Kids, /* Se já for numérico, mantém como está */
+        IMP_Monthly_Income /* Se já for numérico, mantém como está */
+    from WORK.TABLE2;
+quit;
